@@ -3,8 +3,11 @@ package main
 import (
 	"crypto/rand"
 	"flag"
+	"fmt"
+	"io"
 	"log"
 	"net"
+	"os"
 	"time"
 )
 
@@ -12,6 +15,7 @@ var (
 	listen  = flag.String("listen", "", "listen on address")
 	connect = flag.String("connect", "", "connect to address")
 	count   = flag.Int64("count", 1000, "the number of packets to send")
+	output  = flag.String("output", "", "output a list of times into a text file")
 )
 
 const (
@@ -44,6 +48,17 @@ func main() {
 			}
 		}
 	} else if *connect != "" {
+		var outputFile io.Writer
+		if *output != "" {
+			f, err := os.Create(*output)
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer f.Close()
+
+			outputFile = f
+		}
+
 		conn, err := net.Dial("udp", *connect)
 		if err != nil {
 			log.Fatal(err)
@@ -75,6 +90,10 @@ func main() {
 			}
 
 			end := time.Since(start)
+
+			if outputFile != nil && i%100 == 0 {
+				fmt.Fprintf(outputFile, "%d\n", end.Nanoseconds())
+			}
 
 			total += uint64(end.Nanoseconds())
 		}
