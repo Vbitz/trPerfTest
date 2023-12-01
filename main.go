@@ -1,108 +1,70 @@
 package main
 
 import (
-	"encoding/binary"
+	"crypto/rand"
 	"flag"
 	"log"
 	"net"
-	"net/netip"
-
-	"github.com/schollz/progressbar/v3"
+	"time"
 )
 
 var (
-	listen    = flag.String("listen", "", "listen on a address for connections")
-	connect   = flag.String("connect", "", "connect on a address for connections")
-	size      = flag.Int64("size", 1024, "the number of blocks to transmit")
-	blockSize = flag.Int64("bs", 1024, "the block size to transmit with")
+	listen  = flag.String("listen", "", "listen on address")
+	connect = flag.String("connect", "", "connect to address")
+	count   = flag.Int64("count", 1000, "the number of packets to send")
 )
 
-type header struct {
-	Size      int64
-	BlockSize int64
-}
+const (
+	PACKET_SIZE = 1024
+)
 
 func main() {
 	flag.Parse()
 
 	if *listen != "" {
-		addr, err := netip.ParseAddrPort(*listen)
+		listen, err := net.ListenPacket("udp", *listen)
 		if err != nil {
 			log.Fatal(err)
 		}
-		conn, err := net.ListenUDP("udp", net.UDPAddrFromAddrPort(addr))
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer conn.Close()
+		defer listen.Close()
 
-		log.Printf("listening on: %s", conn.LocalAddr().String())
+		log.Printf("listening on: %s", listen.LocalAddr())
 
-		var hdr header
+		buf := make([]byte, PACKET_SIZE)
 
-		err = binary.Read(conn, binary.NativeEndian, &hdr)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		log.Printf("got config: size=%d blockSize=%d", hdr.Size, hdr.BlockSize)
-
-		pb := progressbar.DefaultBytes(hdr.Size*hdr.BlockSize, "receiving")
-		defer pb.Close()
-
-		buf := make([]byte, hdr.BlockSize)
-
-		var removeAddr *net.UDPAddr
-
-		for i := 0; i < int(hdr.Size); i++ {
-			var n int
-
-			n, removeAddr, err = conn.ReadFromUDP(buf)
+		for {
+			n, addr, err := listen.ReadFrom(buf)
 			if err != nil {
 				log.Fatal(err)
 			}
 
-			_, err = conn.WriteToUDP(buf, removeAddr)
+			_, err = listen.WriteTo(buf[:n], addr)
 			if err != nil {
 				log.Fatal(err)
 			}
-
-			pb.Add(n)
 		}
-
-		log.Printf("finished")
 	} else if *connect != "" {
-		addr, err := netip.ParseAddrPort(*connect)
-		if err != nil {
-			log.Fatal(err)
-		}
-		conn, err := net.DialUDP("udp", nil, net.UDPAddrFromAddrPort(addr))
+		conn, err := net.Dial("udp", *connect)
 		if err != nil {
 			log.Fatal(err)
 		}
 		defer conn.Close()
 
-		log.Printf("connected to: %s", conn.RemoteAddr().String())
+		log.Printf("connected to: %s", conn.RemoteAddr())
 
-		var hdr header
+		buf := make([]byte, PACKET_SIZE)
 
-		hdr.BlockSize = *blockSize
-		hdr.Size = *size
-
-		err = binary.Write(conn, binary.NativeEndian, &hdr)
+		_, err = rand.Read(buf)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		log.Printf("sent config: size=%d blockSize=%d", hdr.Size, hdr.BlockSize)
+		var total uint64 = 0
 
-		pb := progressbar.DefaultBytes(hdr.Size*hdr.BlockSize, "sending")
-		defer pb.Close()
-
-		buf := make([]byte, hdr.BlockSize)
-
-		for i := 0; i < int(hdr.Size); i++ {
-			n, err := conn.Write(buf)
+		var i int64
+		for i = 0; i < *count; i++ {
+			start := time.Now()
+			_, err = conn.Write(buf)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -112,10 +74,12 @@ func main() {
 				log.Fatal(err)
 			}
 
-			pb.Add(n)
+			end := time.Since(start)
+
+			total += uint64(end.Nanoseconds())
 		}
 
-		log.Printf("finished")
+		log.Printf("completed: total=%dns average=%fns count=%d", total, float64(total)/float64(*count), *count)
 	} else {
 		flag.Usage()
 	}
